@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState } from 'react';
-import { Users, GraduationCap, BarChart3, Plus, X, Loader2, CheckCircle2, ChevronDown, Database, AlertCircle, BookOpen } from 'lucide-react';
+import { Users, GraduationCap, BarChart3, Plus, X, Loader2, CheckCircle2, ChevronDown, Database, AlertCircle, BookOpen, Calendar, Clock, ArrowRight } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
-import { UserProfile, Subject, ClassLevel, Stream, TeacherAllocation } from '../types';
+import { UserProfile, Subject, ClassLevel, Stream, TeacherAllocation, AcademicYear, Term } from '../types';
 
 export const AdminAcademics: React.FC = () => {
   // Data States
@@ -11,68 +11,69 @@ export const AdminAcademics: React.FC = () => {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [classLevels, setClassLevels] = useState<ClassLevel[]>([]);
   const [allStreams, setAllStreams] = useState<Stream[]>([]);
-  const [currentYearId, setCurrentYearId] = useState<string | null>(null);
+  
+  // Session States
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
+  const [terms, setTerms] = useState<Term[]>([]);
+  const [currentYear, setCurrentYear] = useState<AcademicYear | null>(null);
+  const [currentTerm, setCurrentTerm] = useState<Term | null>(null);
 
   // UI States
   const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAllocModalOpen, setIsAllocModalOpen] = useState(false);
+  const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Form States
+  // Allocation Form States
   const [selectedTeacher, setSelectedTeacher] = useState('');
   const [selectedSubject, setSelectedSubject] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedStream, setSelectedStream] = useState('');
 
-  // Computed: Filter streams based on selected class
+  // Session Form States
+  const [newYearName, setNewYearName] = useState('');
+  const [newYearStart, setNewYearStart] = useState('');
+  const [newYearEnd, setNewYearEnd] = useState('');
+  const [newTermName, setNewTermName] = useState('Term 1');
+  const [newTermStart, setNewTermStart] = useState('');
+  const [newTermEnd, setNewTermEnd] = useState('');
+
+  // Computed
   const availableStreams = allStreams.filter(s => s.class_id === selectedClass);
 
   // Helper to format errors safely
   const formatError = (err: any): string => {
       if (!err) return "Unknown error occurred.";
       if (typeof err === 'string') return err;
-      
-      // Handle Supabase/Postgrest Error Objects
+      if (err instanceof Error) return err.message;
       if (typeof err === 'object') {
-          // Combine message and details if available
           const parts = [];
           if (err.message) parts.push(err.message);
           if (err.details) parts.push(`(${err.details})`);
-          if (err.hint) parts.push(`Hint: ${err.hint}`);
-          
           if (parts.length > 0) return parts.join(' ');
-          
-          if (err.error_description) return err.error_description;
       }
-
-      // Last resort: Stringify
-      try {
-          return JSON.stringify(err);
-      } catch (e) {
-          return "Unreadable error format.";
-      }
+      return "Operation failed. Check permissions or network.";
   };
 
   const fetchData = async () => {
     setLoading(true);
     
     try {
-        // 1. Fetch Reference Data Parallel
         const [
             teachersRes, 
             subjectsRes, 
             classesRes, 
             streamsRes, 
-            yearRes,
+            yearsRes,
             allocRes
         ] = await Promise.all([
             supabase.from('profiles').select('*').eq('role', 'teacher'),
             supabase.from('subjects').select('*').order('name'),
             supabase.from('class_levels').select('*').order('level'),
             supabase.from('streams').select('*').order('name'),
-            supabase.from('academic_years').select('id').eq('is_current', true).maybeSingle(),
+            supabase.from('academic_years').select('*').order('name', { ascending: false }),
             supabase.from('teacher_allocations').select(`
                 id,
                 teacher_id,
@@ -86,31 +87,22 @@ export const AdminAcademics: React.FC = () => {
         if (subjectsRes.data) setSubjects(subjectsRes.data as Subject[]);
         if (classesRes.data) setClassLevels(classesRes.data as ClassLevel[]);
         if (streamsRes.data) setAllStreams(streamsRes.data as Stream[]);
-        
-        // Handle Academic Year Logic
-        if (yearRes.data) {
-            setCurrentYearId(yearRes.data.id);
-        } else {
-            console.log("No current academic year found. Attempting to recover...");
-            // Fallback 1: Try to find ANY year
-            const { data: anyYear } = await supabase.from('academic_years').select('id').limit(1).maybeSingle();
-            if (anyYear) {
-                setCurrentYearId(anyYear.id);
-            } else {
-                // Fallback 2: Create a default year
-                const currentYearName = new Date().getFullYear().toString();
-                console.log(`Creating default academic year: ${currentYearName}`);
-                const { data: newYear, error: yearError } = await supabase
-                    .from('academic_years')
-                    .insert({ name: currentYearName, is_current: true })
-                    .select()
-                    .single();
-                
-                if (newYear) {
-                    setCurrentYearId(newYear.id);
-                } else if (yearError) {
-                    console.error("Failed to create academic year:", yearError);
-                }
+        if (yearsRes.data) setAcademicYears(yearsRes.data as AcademicYear[]);
+
+        // Determine Active Year
+        const activeY = yearsRes.data?.find((y: any) => y.is_current) || yearsRes.data?.[0];
+        setCurrentYear(activeY || null);
+
+        // Fetch Terms for Active Year
+        if (activeY) {
+            const { data: termsData } = await supabase
+                .from('terms')
+                .select('*')
+                .eq('academic_year_id', activeY.id)
+                .order('name');
+            if (termsData) {
+                setTerms(termsData as Term[]);
+                setCurrentTerm(termsData.find((t: any) => t.is_current) || null);
             }
         }
 
@@ -136,191 +128,217 @@ export const AdminAcademics: React.FC = () => {
     fetchData();
   }, []);
 
+  // --- ALLOCATION LOGIC ---
+
   const handleAllocate = async (e: React.FormEvent) => {
     e.preventDefault();
     setSuccessMsg(null);
     setErrorMsg(null);
     
-    if (!currentYearId) {
-        setErrorMsg("System Error: No active Academic Year found. Please check database configuration.");
-        return;
-    }
-
-    if (!selectedTeacher || !selectedSubject || !selectedStream) {
-        setErrorMsg("Please complete all fields (Teacher, Subject, Class, and Stream).");
+    if (!currentYear) {
+        setErrorMsg("System Error: No active Academic Year. Use 'Calendar Settings' to create one.");
         return;
     }
 
     setSubmitting(true);
-    
     try {
-        const payload = {
+        const { error } = await supabase.from('teacher_allocations').insert({
             teacher_id: selectedTeacher,
             subject_id: selectedSubject,
             stream_id: selectedStream,
-            academic_year_id: currentYearId
-        };
-        
-        const { error } = await supabase.from('teacher_allocations').insert(payload);
+            academic_year_id: currentYear.id
+        });
 
         if (error) {
-            console.error("Allocation DB Error:", error);
-            // Check for RLS policy error specifically
-            if (error.code === '42501') {
-                setErrorMsg("Permission Denied: Run the commands in 'database_updates.sql' to fix Row Level Security.");
-            } else {
-                setErrorMsg(`Database Error: ${formatError(error)}`);
-            }
-        } else {
-            setSuccessMsg("Teacher successfully assigned to class.");
-            // Reset form
-            setSelectedTeacher('');
-            setSelectedSubject('');
-            setSelectedClass('');
-            setSelectedStream('');
-            // Refresh list
-            fetchData(); 
-            // Close modal after brief delay
-            setTimeout(() => {
-                setSuccessMsg(null);
-                setIsModalOpen(false);
-            }, 2000);
+             if (error.code === '42501') throw new Error("Permission Denied: Run SQL.txt script to fix RLS.");
+             throw error;
         }
+
+        setSuccessMsg("Teacher successfully assigned.");
+        fetchData();
+        setTimeout(() => {
+            setSuccessMsg(null);
+            setIsAllocModalOpen(false);
+        }, 1500);
     } catch (err: any) {
-        setErrorMsg(`Unexpected error: ${formatError(err)}`);
+        setErrorMsg(formatError(err));
     } finally {
         setSubmitting(false);
     }
   };
 
-  const handleSeedStreams = async () => {
-    if (!confirm("Generate streams (North, Central, South, East, West) for Senior 1-4?")) return;
-    setLoading(true);
-    setErrorMsg(null);
+  // --- SESSION / CALENDAR LOGIC ---
 
+  const handleCreateYear = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
     try {
-        // Fetch Levels 1-4 (S1-S4)
-        const { data: levels } = await supabase
-            .from('class_levels')
-            .select('id, name, level')
-            .gte('level', 1)
-            .lte('level', 4);
+        // Deactivate old years if this one is active (simple frontend approach, DB trigger better)
+        await supabase.from('academic_years').update({ is_current: false }).neq('id', '00000000-0000-0000-0000-000000000000'); // Deactivate all
 
-        if (!levels?.length) throw new Error("Class levels S1-S4 not found. Please populate class_levels table first.");
+        const { error } = await supabase.from('academic_years').insert({
+            name: newYearName,
+            start_date: newYearStart,
+            end_date: newYearEnd,
+            is_current: true
+        });
+        if (error) throw error;
+        
+        await fetchData();
+        setNewYearName('');
+        setNewYearStart('');
+        setNewYearEnd('');
+        setSuccessMsg("New Academic Year Created & Activated!");
+    } catch (err) {
+        setErrorMsg(formatError(err));
+    } finally {
+        setSubmitting(false);
+    }
+  };
 
-        // Fetch EXISTING streams to avoid duplicates
-        const { data: existingStreams } = await supabase.from('streams').select('class_id, name');
+  const handleActivateYear = async (yearId: string) => {
+    setLoading(true);
+    try {
+        // 1. Deactivate all
+        await supabase.from('academic_years').update({ is_current: false }).gt('created_at', '2000-01-01');
+        // 2. Activate one
+        const { error } = await supabase.from('academic_years').update({ is_current: true }).eq('id', yearId);
+        if (error) throw error;
+        await fetchData();
+    } catch (err) {
+        alert(formatError(err));
+    } finally {
+        setLoading(false);
+    }
+  };
 
-        const targetStreams = ['North', 'Central', 'South', 'East', 'West'];
+  const handleCreateTerm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentYear) return;
+    setSubmitting(true);
+    try {
+        await supabase.from('terms').update({ is_current: false }).eq('academic_year_id', currentYear.id);
+
+        const { error } = await supabase.from('terms').insert({
+            academic_year_id: currentYear.id,
+            name: newTermName,
+            start_date: newTermStart,
+            end_date: newTermEnd,
+            is_current: true
+        });
+        if (error) throw error;
+        
+        await fetchData();
+        setSuccessMsg("Term Created & Activated!");
+    } catch (err) {
+        setErrorMsg(formatError(err));
+    } finally {
+        setSubmitting(false);
+    }
+  };
+
+  const handleActivateTerm = async (termId: string) => {
+      if(!currentYear) return;
+      setLoading(true);
+      try {
+          await supabase.from('terms').update({ is_current: false }).eq('academic_year_id', currentYear.id);
+          const { error } = await supabase.from('terms').update({ is_current: true }).eq('id', termId);
+          if (error) throw error;
+          await fetchData();
+      } catch(err) {
+          alert(formatError(err));
+      } finally {
+          setLoading(false);
+      }
+  }
+
+  // --- SEEDING LOGIC ---
+
+  const handleSeedStreams = async () => {
+    if (!confirm("Generate streams (North, Central, South, East, West) for S1-S4?")) return;
+    setLoading(true);
+    try {
+        const { data: levels } = await supabase.from('class_levels').select('id, level').gte('level', 1).lte('level', 4);
+        if (!levels?.length) throw new Error("Levels S1-S4 missing.");
+        
+        const { data: existing } = await supabase.from('streams').select('class_id, name');
+        const target = ['North', 'Central', 'South', 'East', 'West'];
         const payload: any[] = [];
 
-        levels.forEach(level => {
-            targetStreams.forEach(name => {
-                // Check if this stream exists for this class
-                const alreadyExists = existingStreams?.some(
-                    es => es.class_id === level.id && es.name === name
-                );
-
-                if (!alreadyExists) {
-                    payload.push({ class_id: level.id, name });
+        levels.forEach(lvl => {
+            target.forEach(name => {
+                if (!existing?.some(e => e.class_id === lvl.id && e.name === name)) {
+                    payload.push({ class_id: lvl.id, name });
                 }
             });
         });
 
-        if (payload.length === 0) {
-            setSuccessMsg("All streams for S1-S4 already exist.");
-            setTimeout(() => setSuccessMsg(null), 3000);
-        } else {
-            const { error } = await supabase.from('streams').insert(payload);
-            if (error) {
-                 if (error.code === '42501') {
-                     throw new Error("Permission Denied: You need Admin RLS policies. Check 'SQL.txt'.");
-                 }
-                 throw error;
-            }
-            setSuccessMsg(`Successfully created ${payload.length} new streams.`);
-            fetchData(); // Refresh streams
-            setTimeout(() => setSuccessMsg(null), 3000);
-        }
+        if (payload.length > 0) await supabase.from('streams').insert(payload);
+        setSuccessMsg(payload.length > 0 ? `Created ${payload.length} streams.` : "Streams already exist.");
+        setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err: any) {
-        const msg = formatError(err);
-        alert(`Failed to seed streams: ${msg}`);
-        console.error(err);
+        alert(formatError(err));
     } finally {
         setLoading(false);
     }
   };
 
   const handleSeedSubjects = async () => {
-    if (!confirm("Add missing subjects (Biology, Physics, Chemistry, etc.) to the database?")) return;
-    setLoading(true);
-    setSuccessMsg(null);
-
-    const subjectsList = [
-        "Biology", "Physics", "Chemistry", "ICT", "Mathematics", "English", 
-        "Geography", "Kiswahili", "Fine Art", "CRE", "Luganda", 
-        "Entrepreneurship", "Performing Arts", "Moral Training", "History", 
-        "Agriculture", "Physical Education", "Literature", "Economics"
-    ];
-
-    try {
-        // Fetch existing subjects to filter duplicates
-        const { data: existing } = await supabase.from('subjects').select('name');
-        const existingNames = new Set(existing?.map(s => s.name.toLowerCase()));
-
-        const payload = subjectsList
-            .filter(name => !existingNames.has(name.toLowerCase()))
-            .map(name => ({
-                name,
-                code: name.substring(0, 3).toUpperCase(),
-                level: 'O-Level' // Default
-            }));
-
-        if (payload.length > 0) {
-            const { error } = await supabase.from('subjects').insert(payload);
-            if (error) throw error;
-            setSuccessMsg(`Added ${payload.length} new subjects.`);
-            fetchData();
-        } else {
-            setSuccessMsg("All subjects already exist.");
-        }
-         setTimeout(() => setSuccessMsg(null), 3000);
-
-    } catch (err: any) {
-         alert(`Failed to seed subjects: ${formatError(err)}`);
-    } finally {
-        setLoading(false);
-    }
+      if (!confirm("Add missing subjects?")) return;
+      setLoading(true);
+      const subjectsList = ["Biology", "Physics", "Chemistry", "ICT", "Mathematics", "English", "Geography", "Kiswahili", "Fine Art", "CRE", "Luganda", "Entrepreneurship", "Performing Arts", "Moral Training", "History", "Agriculture", "Physical Education", "Literature", "Economics"];
+      
+      try {
+          const { data: existing } = await supabase.from('subjects').select('name');
+          const existingSet = new Set(existing?.map(s => s.name));
+          const payload = subjectsList
+            .filter(n => !existingSet.has(n))
+            .map(n => ({ name: n, code: n.substring(0,3).toUpperCase(), level: 'O-Level' }));
+          
+          if (payload.length > 0) await supabase.from('subjects').insert(payload);
+          setSuccessMsg(payload.length > 0 ? `Added ${payload.length} subjects.` : "Subjects up to date.");
+          fetchData();
+          setTimeout(() => setSuccessMsg(null), 3000);
+      } catch (err: any) {
+          alert(formatError(err));
+      } finally {
+          setLoading(false);
+      }
   };
 
   return (
-    <div className="space-y-6 animate-fade-in relative">
+    <div className="space-y-6 animate-fade-in relative pb-20">
         
         {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
             <div>
-            <h2 className="text-3xl font-bold text-slate-800 tracking-tight">Academic Administration</h2>
-            <p className="text-slate-500 mt-1">Oversee class allocations, subject performance, and staff distribution.</p>
+                <h2 className="text-3xl font-bold text-slate-800 tracking-tight">Academic Administration</h2>
+                <div className="flex items-center gap-2 mt-2 text-slate-500 text-sm">
+                    <Calendar size={14} className="text-indigo-600"/>
+                    <span className="font-semibold text-slate-700">Current Session:</span>
+                    {currentYear ? (
+                        <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded border border-indigo-100 font-medium">
+                            {currentYear.name} {currentTerm ? `— ${currentTerm.name}` : '(No Active Term)'}
+                        </span>
+                    ) : (
+                        <span className="text-red-500 font-bold bg-red-50 px-2 rounded">Not Set</span>
+                    )}
+                </div>
             </div>
-            <div className="flex gap-2 flex-wrap">
+
+            <div className="flex flex-wrap gap-3">
                 <button 
-                    onClick={handleSeedSubjects}
-                    className="flex items-center gap-2 bg-white text-slate-600 border border-slate-200 px-3 py-2.5 rounded-xl font-medium shadow-sm hover:bg-slate-50 transition-all text-sm"
-                    title="Add default subjects"
+                    onClick={() => setIsSessionModalOpen(true)}
+                    className="flex items-center gap-2 bg-white text-indigo-600 border border-indigo-200 px-4 py-2.5 rounded-xl font-medium shadow-sm hover:bg-indigo-50 transition-all text-sm"
                 >
-                    <BookOpen size={16} />
-                    <span>Seed Subjects</span>
+                    <Clock size={16} />
+                    Calendar Settings
                 </button>
-                 <button 
-                    onClick={handleSeedStreams}
-                    className="flex items-center gap-2 bg-white text-slate-600 border border-slate-200 px-3 py-2.5 rounded-xl font-medium shadow-sm hover:bg-slate-50 transition-all text-sm"
-                    title="Generate default streams for S1-S4"
-                >
-                    <Database size={16} />
-                    <span>Seed Streams</span>
-                </button>
+                <div className="h-8 w-px bg-slate-200 hidden md:block"></div>
+                <button onClick={handleSeedSubjects} className="btn-secondary text-sm px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">Seed Subjects</button>
+                <button onClick={handleSeedStreams} className="btn-secondary text-sm px-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50">Seed Streams</button>
                 <button 
-                    onClick={() => setIsModalOpen(true)}
+                    onClick={() => setIsAllocModalOpen(true)}
                     className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-xl font-medium shadow-lg shadow-slate-900/20 hover:bg-slate-800 transition-all hover:scale-105 active:scale-95 text-sm"
                 >
                     <Plus size={18} />
@@ -329,9 +347,9 @@ export const AdminAcademics: React.FC = () => {
             </div>
         </div>
 
-        {/* Success Banner (Global) */}
-        {successMsg && !isModalOpen && (
-            <div className="bg-green-50 text-green-700 p-4 rounded-xl flex items-center gap-3 animate-fade-in border border-green-100">
+        {/* Global Success Msg */}
+        {successMsg && !isAllocModalOpen && !isSessionModalOpen && (
+            <div className="bg-green-50 text-green-700 p-4 rounded-xl flex items-center gap-3 border border-green-100">
                 <CheckCircle2 size={24} />
                 <span className="font-medium">{successMsg}</span>
             </div>
@@ -341,66 +359,45 @@ export const AdminAcademics: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="glass-card p-6 rounded-2xl">
                 <div className="flex items-center gap-4 mb-4">
-                    <div className="p-3 bg-blue-100 text-blue-600 rounded-xl">
-                        <Users size={24} />
-                    </div>
+                    <div className="p-3 bg-blue-100 text-blue-600 rounded-xl"><Users size={24} /></div>
                     <div>
                         <p className="text-sm font-medium text-slate-500">Total Teachers</p>
                         <h3 className="text-2xl font-bold text-slate-800">{teachers.length}</h3>
                     </div>
                 </div>
-                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-blue-500 w-[80%] h-full"></div>
-                </div>
-                <p className="text-xs text-slate-500 mt-2">Active Staff Members</p>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden"><div className="bg-blue-500 w-[80%] h-full"></div></div>
             </div>
 
             <div className="glass-card p-6 rounded-2xl">
                 <div className="flex items-center gap-4 mb-4">
-                    <div className="p-3 bg-violet-100 text-violet-600 rounded-xl">
-                        <GraduationCap size={24} />
-                    </div>
+                    <div className="p-3 bg-violet-100 text-violet-600 rounded-xl"><GraduationCap size={24} /></div>
                     <div>
                         <p className="text-sm font-medium text-slate-500">Allocations</p>
                         <h3 className="text-2xl font-bold text-slate-800">{allocations.length}</h3>
                     </div>
                 </div>
-                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-violet-500 w-[100%] h-full"></div>
-                </div>
-                <p className="text-xs text-slate-500 mt-2">This Term</p>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden"><div className="bg-violet-500 w-[100%] h-full"></div></div>
             </div>
 
             <div className="glass-card p-6 rounded-2xl">
                 <div className="flex items-center gap-4 mb-4">
-                    <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl">
-                        <BarChart3 size={24} />
-                    </div>
+                    <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl"><BarChart3 size={24} /></div>
                     <div>
                         <p className="text-sm font-medium text-slate-500">Classes</p>
                         <h3 className="text-2xl font-bold text-slate-800">{classLevels.length}</h3>
                     </div>
                 </div>
-                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                    <div className="bg-emerald-500 w-[100%] h-full"></div>
-                </div>
-                <p className="text-xs text-slate-500 mt-2">Active Class Levels</p>
+                <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden"><div className="bg-emerald-500 w-[100%] h-full"></div></div>
             </div>
         </div>
 
         {/* Allocation List */}
         <div className="glass-card rounded-2xl overflow-hidden p-6 min-h-[400px]">
-            <h3 className="text-lg font-bold text-slate-800 mb-6">Recent Teacher Allocations</h3>
-            
+            <h3 className="text-lg font-bold text-slate-800 mb-6">Staff Allocations ({currentTerm ? currentTerm.name : 'No Term'})</h3>
             {loading ? (
-                <div className="flex items-center justify-center h-40">
-                    <Loader2 className="animate-spin text-indigo-600" size={32} />
-                </div>
+                <div className="flex justify-center h-40 items-center"><Loader2 className="animate-spin text-indigo-600" size={32} /></div>
             ) : allocations.length === 0 ? (
-                <div className="text-center text-slate-500 py-12">
-                    <GraduationCap size={48} className="mx-auto mb-3 text-slate-300"/>
-                    <p>No allocations found. Create one to get started.</p>
-                </div>
+                <div className="text-center text-slate-500 py-12"><GraduationCap size={48} className="mx-auto mb-3 opacity-50"/><p>No allocations found for this session.</p></div>
             ) : (
                 <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse">
@@ -410,28 +407,15 @@ export const AdminAcademics: React.FC = () => {
                                 <th className="pb-4 text-xs font-bold text-slate-400 uppercase">Subject</th>
                                 <th className="pb-4 text-xs font-bold text-slate-400 uppercase">Class</th>
                                 <th className="pb-4 text-xs font-bold text-slate-400 uppercase">Stream</th>
-                                <th className="pb-4 text-xs font-bold text-slate-400 uppercase text-right">Action</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {allocations.map((alloc) => (
-                                <tr key={alloc.id} className="group hover:bg-slate-50/50 transition-colors">
+                                <tr key={alloc.id} className="hover:bg-slate-50/50">
                                     <td className="py-4 font-medium text-slate-700">{alloc.teacher_name}</td>
-                                    <td className="py-4 text-slate-600">
-                                        <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-bold mr-2">
-                                            {alloc.subject_code}
-                                        </span>
-                                        {alloc.subject_name}
-                                    </td>
+                                    <td className="py-4 text-slate-600"><span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-xs font-bold mr-2">{alloc.subject_code}</span>{alloc.subject_name}</td>
                                     <td className="py-4 text-slate-600">{alloc.class_name}</td>
-                                    <td className="py-4">
-                                        <span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-bold">
-                                            {alloc.stream_name}
-                                        </span>
-                                    </td>
-                                    <td className="py-4 text-right">
-                                        <button className="text-indigo-600 text-sm font-medium hover:underline">Edit</button>
-                                    </td>
+                                    <td className="py-4"><span className="bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs font-bold">{alloc.stream_name}</span></td>
                                 </tr>
                             ))}
                         </tbody>
@@ -440,141 +424,182 @@ export const AdminAcademics: React.FC = () => {
             )}
         </div>
 
-        {/* Modal */}
-        {isModalOpen && (
+        {/* --- ALLOCATION MODAL --- */}
+        {isAllocModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                <div 
-                    className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" 
-                    onClick={() => setIsModalOpen(false)}
-                ></div>
-                
+                <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsAllocModalOpen(false)}></div>
                 <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto">
-                    <div className="p-6 border-b border-slate-100 flex justify-between items-center sticky top-0 bg-white z-10">
+                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                         <h3 className="text-xl font-bold text-slate-900">Assign Teacher</h3>
-                        <button 
-                            onClick={() => setIsModalOpen(false)}
-                            className="p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-500"
-                        >
-                            <X size={20} />
-                        </button>
+                        <button onClick={() => setIsAllocModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-600" /></button>
                     </div>
-
                     <form onSubmit={handleAllocate} className="p-6 space-y-5">
-                         {/* In-Modal Feedback */}
-                         {successMsg && (
-                            <div className="bg-green-50 text-green-700 p-3 rounded-lg flex items-center gap-3 text-sm border border-green-100">
-                                <CheckCircle2 size={18} />
-                                <span className="font-medium">{successMsg}</span>
+                         {errorMsg && <div className="bg-red-50 text-red-700 p-3 rounded-lg text-sm border border-red-100 flex gap-2"><AlertCircle size={16} className="shrink-0 mt-0.5" />{errorMsg}</div>}
+                         <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Teacher</label>
+                            <div className="relative">
+                                <select value={selectedTeacher} onChange={(e) => setSelectedTeacher(e.target.value)} required className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 outline-none appearance-none bg-white">
+                                    <option value="">Select Staff...</option>
+                                    {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                                </select>
+                                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
                             </div>
-                         )}
-                         {errorMsg && (
-                            <div className="bg-red-50 text-red-700 p-3 rounded-lg flex items-start gap-3 text-sm border border-red-100">
-                                <AlertCircle size={18} className="shrink-0 mt-0.5" />
-                                <span className="font-medium break-words w-full">{errorMsg}</span>
-                            </div>
-                         )}
-
-                         {!successMsg && (
-                             <>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Teacher</label>
-                                    <div className="relative">
-                                        <select
-                                            value={selectedTeacher}
-                                            onChange={(e) => setSelectedTeacher(e.target.value)}
-                                            required
-                                            className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none appearance-none bg-slate-50"
-                                        >
-                                            <option value="">Select a staff member...</option>
-                                            {teachers.map(t => (
-                                                <option key={t.id} value={t.id}>{t.full_name}</option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                                    </div>
+                         </div>
+                         <div className="grid grid-cols-2 gap-4">
+                             <div className="col-span-2">
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Subject</label>
+                                <div className="relative">
+                                    <select value={selectedSubject} onChange={(e) => setSelectedSubject(e.target.value)} required className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 outline-none appearance-none bg-white">
+                                        <option value="">Select Subject...</option>
+                                        {subjects.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+                                    </select>
+                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
                                 </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 mb-1">Subject</label>
-                                    <div className="relative">
-                                        <select
-                                            value={selectedSubject}
-                                            onChange={(e) => setSelectedSubject(e.target.value)}
-                                            required
-                                            className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none appearance-none bg-slate-50"
-                                        >
-                                            <option value="">Select subject...</option>
-                                            {subjects.map(s => (
-                                                <option key={s.id} value={s.id}>{s.name} ({s.code})</option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                                    </div>
+                             </div>
+                             <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Class</label>
+                                <div className="relative">
+                                    <select value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} required className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 outline-none appearance-none bg-white">
+                                        <option value="">Select Class...</option>
+                                        {classLevels.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
                                 </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 mb-1">Class</label>
-                                        <div className="relative">
-                                            <select
-                                                value={selectedClass}
-                                                onChange={(e) => setSelectedClass(e.target.value)}
-                                                required
-                                                className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none appearance-none bg-slate-50"
-                                            >
-                                                <option value="">Select Class...</option>
-                                                {classLevels.map(c => (
-                                                    <option key={c.id} value={c.id}>{c.name}</option>
-                                                ))}
-                                            </select>
-                                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                                        </div>
-                                    </div>
-
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 mb-1">Stream</label>
-                                        <div className="relative">
-                                            <select
-                                                value={selectedStream}
-                                                onChange={(e) => setSelectedStream(e.target.value)}
-                                                required
-                                                disabled={!selectedClass}
-                                                className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none appearance-none bg-slate-50 disabled:bg-slate-100 disabled:text-slate-400"
-                                            >
-                                                <option value="">
-                                                    {availableStreams.length > 0 ? 'Select Stream...' : 'No Streams Found'}
-                                                </option>
-                                                {availableStreams.map(s => (
-                                                    <option key={s.id} value={s.id}>{s.name}</option>
-                                                ))}
-                                            </select>
-                                            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
-                                        </div>
-                                        {selectedClass && availableStreams.length === 0 && (
-                                            <button 
-                                                type="button" 
-                                                onClick={handleSeedStreams}
-                                                className="text-xs text-indigo-600 mt-1 font-medium hover:underline"
-                                            >
-                                                Fix Missing Streams
-                                            </button>
-                                        )}
-                                    </div>
+                             </div>
+                             <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Stream</label>
+                                <div className="relative">
+                                    <select value={selectedStream} onChange={(e) => setSelectedStream(e.target.value)} required disabled={!selectedClass} className="w-full pl-4 pr-10 py-3 rounded-xl border border-slate-200 outline-none appearance-none bg-white disabled:bg-slate-100">
+                                        <option value="">{availableStreams.length ? 'Select...' : 'None'}</option>
+                                        {availableStreams.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                    </select>
+                                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={16} />
                                 </div>
-
-                                <button 
-                                    type="submit" 
-                                    disabled={submitting}
-                                    className="w-full py-3.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-lg shadow-slate-900/20 transition-all flex items-center justify-center gap-2 mt-4 disabled:opacity-70 disabled:cursor-not-allowed"
-                                >
-                                    {submitting ? <Loader2 className="animate-spin" /> : 'Confirm Assignment'}
-                                </button>
-                             </>
-                         )}
+                             </div>
+                         </div>
+                         <button type="submit" disabled={submitting} className="w-full py-3.5 bg-slate-900 text-white font-bold rounded-xl shadow-lg shadow-slate-900/20 flex justify-center gap-2 items-center hover:bg-slate-800 disabled:opacity-70">
+                            {submitting ? <Loader2 className="animate-spin" /> : 'Confirm Assignment'}
+                         </button>
                     </form>
                 </div>
             </div>
         )}
+
+        {/* --- SESSION MANAGEMENT MODAL --- */}
+        {isSessionModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsSessionModalOpen(false)}></div>
+                <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto">
+                    <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-50">
+                        <div>
+                            <h3 className="text-xl font-bold text-slate-900">Academic Calendar</h3>
+                            <p className="text-sm text-indigo-600">Dictate the start and end of school terms.</p>
+                        </div>
+                        <button onClick={() => setIsSessionModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-600" /></button>
+                    </div>
+
+                    <div className="p-6 space-y-8">
+                        {/* 1. Academic Year Section */}
+                        <div className="space-y-4">
+                            <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2">Academic Year</h4>
+                            
+                            <div className="flex gap-4 overflow-x-auto pb-2">
+                                {academicYears.map(year => (
+                                    <div 
+                                        key={year.id} 
+                                        onClick={() => handleActivateYear(year.id)}
+                                        className={`flex-shrink-0 cursor-pointer p-4 rounded-xl border min-w-[140px] transition-all ${year.is_current ? 'bg-indigo-600 text-white border-indigo-600 shadow-md ring-2 ring-indigo-200' : 'bg-white border-slate-200 hover:border-indigo-300'}`}
+                                    >
+                                        <div className="text-sm opacity-80 mb-1">{year.is_current ? 'Active Year' : 'Inactive'}</div>
+                                        <div className="text-xl font-bold">{year.name}</div>
+                                        {year.start_date && <div className="text-xs mt-2 opacity-70">{new Date(year.start_date).getFullYear()}</div>}
+                                    </div>
+                                ))}
+                                {/* Create New Year Form (Mini) */}
+                                <div className="flex-shrink-0 min-w-[200px] p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300">
+                                    <h5 className="text-sm font-bold text-slate-700 mb-2">Create New Year</h5>
+                                    <div className="space-y-2">
+                                        <input 
+                                            placeholder="Year (e.g. 2025)" 
+                                            className="w-full p-2 text-sm border rounded"
+                                            value={newYearName}
+                                            onChange={e => setNewYearName(e.target.value)}
+                                        />
+                                        <input type="date" className="w-full p-2 text-sm border rounded" value={newYearStart} onChange={e => setNewYearStart(e.target.value)}/>
+                                        <input type="date" className="w-full p-2 text-sm border rounded" value={newYearEnd} onChange={e => setNewYearEnd(e.target.value)}/>
+                                        <button 
+                                            onClick={handleCreateYear}
+                                            disabled={!newYearName || submitting}
+                                            className="w-full bg-slate-800 text-white text-xs font-bold py-2 rounded hover:bg-slate-700"
+                                        >
+                                            {submitting ? <Loader2 size={12} className="animate-spin mx-auto"/> : 'Create & Activate'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 2. Term Section (Only if year exists) */}
+                        {currentYear && (
+                             <div className="space-y-4">
+                                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 flex justify-between">
+                                    <span>Terms for {currentYear.name}</span>
+                                    {currentTerm && <span className="text-indigo-600 normal-case bg-indigo-50 px-2 rounded text-xs py-0.5">Current: {currentTerm.name}</span>}
+                                </h4>
+                                
+                                <div className="space-y-3">
+                                    {terms.map(term => (
+                                        <div key={term.id} className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-lg">
+                                            <div>
+                                                <span className="font-bold text-slate-700">{term.name}</span>
+                                                <span className="text-xs text-slate-400 ml-2">
+                                                    {term.start_date} <ArrowRight size={10} className="inline"/> {term.end_date}
+                                                </span>
+                                            </div>
+                                            {term.is_current ? (
+                                                <span className="text-xs font-bold text-green-600 flex items-center gap-1"><CheckCircle2 size={12}/> Active</span>
+                                            ) : (
+                                                <button onClick={() => handleActivateTerm(term.id)} className="text-xs text-indigo-600 font-medium hover:underline">Set Active</button>
+                                            )}
+                                        </div>
+                                    ))}
+
+                                    {/* New Term Creator */}
+                                    <div className="bg-slate-50 p-4 rounded-xl flex flex-col md:flex-row gap-3 items-end border border-slate-200">
+                                        <div className="flex-1 w-full">
+                                            <label className="text-xs font-bold text-slate-500 mb-1 block">New Term Name</label>
+                                            <select value={newTermName} onChange={e => setNewTermName(e.target.value)} className="w-full p-2 text-sm border rounded">
+                                                <option>Term 1</option>
+                                                <option>Term 2</option>
+                                                <option>Term 3</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex-1 w-full">
+                                            <label className="text-xs font-bold text-slate-500 mb-1 block">Start Date</label>
+                                            <input type="date" className="w-full p-2 text-sm border rounded" value={newTermStart} onChange={e => setNewTermStart(e.target.value)}/>
+                                        </div>
+                                        <div className="flex-1 w-full">
+                                            <label className="text-xs font-bold text-slate-500 mb-1 block">End Date</label>
+                                            <input type="date" className="w-full p-2 text-sm border rounded" value={newTermEnd} onChange={e => setNewTermEnd(e.target.value)}/>
+                                        </div>
+                                        <button 
+                                            onClick={handleCreateTerm}
+                                            disabled={submitting}
+                                            className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 h-[38px]"
+                                        >
+                                            {submitting ? '...' : 'Add Term'}
+                                        </button>
+                                    </div>
+                                </div>
+                             </div>
+                        )}
+                        
+                        {successMsg && <div className="text-green-600 text-sm font-medium text-center">{successMsg}</div>}
+                    </div>
+                </div>
+            </div>
+        )}
+
     </div>
   );
 };

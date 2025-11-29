@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { ClassLevel, Stream, Club } from '../types';
@@ -23,6 +24,14 @@ export const StudentAdmissions: React.FC = () => {
     streamId: '',
     clubId: '', // Optional initial club
   });
+
+  // Helper
+  const getErrorMessage = (error: any) => {
+    if (typeof error === 'string') return error;
+    if (error?.message) return error.message;
+    if (error?.error_description) return error.error_description;
+    return "An unknown error occurred during admission.";
+  };
 
   // Filter streams based on selected class
   const availableStreams = streams.filter(s => s.class_id === formData.classId);
@@ -72,7 +81,6 @@ export const StudentAdmissions: React.FC = () => {
                 student_id_human: formData.studentId,
                 gender: formData.gender,
                 current_stream_id: formData.streamId,
-                // Assuming house logic is either handled elsewhere or not strictly required for admission now
             })
             .select()
             .single();
@@ -81,10 +89,6 @@ export const StudentAdmissions: React.FC = () => {
 
         // 2. Insert into Club (if selected and if table exists)
         if (formData.clubId && student) {
-            // Note: Schema might not strictly have club_members in the first prompt, 
-            // but assuming a standard many-to-many or a simple link is desired.
-            // If table doesn't exist, this might fail silently or throw.
-            // We'll try a standard 'club_members' table structure.
             const { error: clubError } = await supabase
                 .from('club_members')
                 .insert({
@@ -95,7 +99,7 @@ export const StudentAdmissions: React.FC = () => {
             
             if (clubError) {
                 console.warn("Could not add to club (Table might be missing or RLS):", clubError);
-                // Don't fail the whole admission for this
+                // Don't fail the whole admission for this, but maybe warn
             }
         }
 
@@ -109,7 +113,7 @@ export const StudentAdmissions: React.FC = () => {
             clubId: ''
         });
     } catch (err: any) {
-        setErrorMsg(err.message || "Failed to admit student.");
+        setErrorMsg(getErrorMessage(err));
     } finally {
         setSubmitting(false);
     }

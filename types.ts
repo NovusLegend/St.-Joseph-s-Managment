@@ -1,3 +1,4 @@
+
 export enum ViewState {
   DASHBOARD = 'DASHBOARD',
   CLUBS = 'CLUBS',
@@ -46,6 +47,23 @@ export interface ElectionCandidate {
 }
 
 // Academic Types
+
+export interface AcademicYear {
+  id: string;
+  name: string; // "2024"
+  start_date: string;
+  end_date: string;
+  is_current: boolean;
+}
+
+export interface Term {
+  id: string;
+  academic_year_id: string;
+  name: string; // "Term 1"
+  start_date: string;
+  end_date: string;
+  is_current: boolean;
+}
 
 export interface Subject {
   id: string;

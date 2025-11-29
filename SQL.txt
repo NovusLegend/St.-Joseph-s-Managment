@@ -17,10 +17,11 @@ CREATE TABLE IF NOT EXISTS public.clubs (
 
 CREATE TABLE IF NOT EXISTS public.club_members (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  club_id UUID REFERENCES public.clubs(id),
-  student_id UUID REFERENCES public.students(id),
+  club_id UUID REFERENCES public.clubs(id) ON DELETE CASCADE,
+  student_id UUID REFERENCES public.students(id) ON DELETE CASCADE,
   role TEXT DEFAULT 'member',
-  joined_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+  joined_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
+  UNIQUE(club_id, student_id)
 );
 
 -- 2. ENABLE ROW LEVEL SECURITY (RLS) ON KEY TABLES
@@ -33,19 +34,17 @@ ALTER TABLE public.class_levels ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.subjects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.academic_years ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.terms ENABLE ROW LEVEL SECURITY;
 
 -- 3. POLICIES FOR TEACHER ALLOCATIONS
--- Drop existing to avoid conflicts
 DROP POLICY IF EXISTS "Admins full access allocations" ON public.teacher_allocations;
 DROP POLICY IF EXISTS "Teachers view own allocations" ON public.teacher_allocations;
 
--- Admins can Create, Read, Update, Delete
 CREATE POLICY "Admins full access allocations" ON public.teacher_allocations
   FOR ALL USING (
     exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
   );
 
--- Teachers can only View their own
 CREATE POLICY "Teachers view own allocations" ON public.teacher_allocations
   FOR SELECT USING (
     teacher_id = auth.uid()
@@ -83,7 +82,7 @@ CREATE POLICY "Admins manage club members" ON public.club_members
   );
 
 -- 6. POLICIES FOR ACADEMIC STRUCTURE (Streams, Classes, Subjects)
--- Allows Admins to run "Seed Streams" and manage curriculum
+DROP POLICY IF EXISTS "Admins manage streams" ON public.streams;
 CREATE POLICY "Admins manage streams" ON public.streams
   FOR ALL USING (
     exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
@@ -93,27 +92,33 @@ CREATE POLICY "Everyone reads streams" ON public.streams FOR SELECT USING (true)
 CREATE POLICY "Everyone reads classes" ON public.class_levels FOR SELECT USING (true);
 CREATE POLICY "Everyone reads subjects" ON public.subjects FOR SELECT USING (true);
 CREATE POLICY "Everyone reads years" ON public.academic_years FOR SELECT USING (true);
+CREATE POLICY "Everyone reads terms" ON public.terms FOR SELECT USING (true);
+
+-- Allow admins to manage Years and Terms
+CREATE POLICY "Admins manage years" ON public.academic_years
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+  
+CREATE POLICY "Admins manage terms" ON public.terms
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+
 
 -- 7. PROFILE POLICIES (Fixes infinite loading on login)
 CREATE POLICY "Public profiles view" ON public.profiles FOR SELECT USING (true);
 CREATE POLICY "Users update own profile" ON public.profiles FOR UPDATE USING (id = auth.uid());
 CREATE POLICY "Users insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
 
--- 8. ACADEMIC YEAR FIX (If missing)
-INSERT INTO public.academic_years (name, is_current)
-SELECT '2024', true
-WHERE NOT EXISTS (SELECT 1 FROM public.academic_years WHERE is_current = true);
-
--- 9. FIX MISSING STREAMS FOR S1-S4
+-- 8. FIX MISSING STREAMS FOR S1-S4
 DO $$
 DECLARE
   level_rec RECORD;
   stream_name TEXT;
   stream_arr TEXT[] := ARRAY['North', 'Central', 'South', 'East', 'West'];
 BEGIN
-  -- For each level from 1 to 4
   FOR level_rec IN SELECT id, name FROM public.class_levels WHERE level BETWEEN 1 AND 4 LOOP
-    -- For each target stream name
     FOREACH stream_name IN ARRAY stream_arr LOOP
       IF NOT EXISTS (SELECT 1 FROM public.streams WHERE class_id = level_rec.id AND name = stream_name) THEN
          INSERT INTO public.streams (class_id, name) VALUES (level_rec.id, stream_name);
@@ -122,7 +127,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- 10. SEED MISSING SUBJECTS
+-- 9. SEED MISSING SUBJECTS
 DO $$
 DECLARE
   subj_name TEXT;
@@ -140,3 +145,27 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+-- 10. CLUBS FIX
+ALTER TABLE public.clubs ADD COLUMN IF NOT EXISTS category TEXT DEFAULT 'General';
+ALTER TABLE public.clubs ADD COLUMN IF NOT EXISTS meeting_day TEXT DEFAULT 'Friday';
+
+-- 11. (OPTIONAL) SINGLE ACTIVE YEAR TRIGGER
+-- Run this if you want the DB to enforce only 1 active year automatically.
+-- NOTE: The frontend already handles this logic safely, so this is optional but recommended.
+CREATE OR REPLACE FUNCTION set_single_current_year()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.is_current = true THEN
+    UPDATE public.academic_years SET is_current = false WHERE id <> NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_single_current_year ON public.academic_years;
+CREATE TRIGGER trigger_single_current_year
+  BEFORE INSERT OR UPDATE ON public.academic_years
+  FOR EACH ROW
+  WHEN (NEW.is_current = true)
+  EXECUTE PROCEDURE set_single_current_year();

@@ -16,6 +16,8 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ userId }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [assessmentType, setAssessmentType] = useState('BOT'); // BOT, MOT, EOT
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Fetch Allocations
   useEffect(() => {
@@ -56,6 +58,7 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ userId }) => {
 
     const fetchClassData = async () => {
       setLoading(true);
+      setErrorMsg(null);
       
       // 1. Get Students in this stream (Mocking the relationship logic: students -> streams)
       // We need the stream_id from the allocation, but we formatted it out. 
@@ -107,37 +110,47 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ userId }) => {
   const handleSave = async () => {
     if (!selectedAllocation) return;
     setSaving(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
     
-    const upserts = Object.keys(marks).map(studentId => ({
-        student_id: studentId,
-        teacher_allocation_id: selectedAllocation.id,
-        assessment_type: assessmentType,
-        score: marks[studentId],
-        updated_at: new Date()
-    }));
+    try {
+        const upserts = Object.keys(marks).map(studentId => ({
+            student_id: studentId,
+            teacher_allocation_id: selectedAllocation.id,
+            assessment_type: assessmentType,
+            score: marks[studentId],
+            updated_at: new Date()
+        }));
 
-    // Perform upsert (requires unique constraint on student_id + allocation + type in DB, assume exists)
-    // For simplicity, we delete old for this context and insert new, or just insert
-    // Supabase upsert:
-    for (const entry of upserts) {
-        // Find existing to update or insert
-        const { data: existing } = await supabase
-            .from('marks')
-            .select('id')
-            .eq('student_id', entry.student_id)
-            .eq('teacher_allocation_id', entry.teacher_allocation_id)
-            .eq('assessment_type', entry.assessment_type)
-            .single();
-            
-        if (existing) {
-             await supabase.from('marks').update({ score: entry.score }).eq('id', existing.id);
-        } else {
-             await supabase.from('marks').insert(entry);
+        // Perform upsert (requires unique constraint on student_id + allocation + type in DB, assume exists)
+        // For simplicity, we delete old for this context and insert new, or just insert
+        // Supabase upsert:
+        for (const entry of upserts) {
+            // Find existing to update or insert
+            const { data: existing, error: fetchErr } = await supabase
+                .from('marks')
+                .select('id')
+                .eq('student_id', entry.student_id)
+                .eq('teacher_allocation_id', entry.teacher_allocation_id)
+                .eq('assessment_type', entry.assessment_type)
+                .maybeSingle();
+                
+            if (existing) {
+                const { error: updateErr } = await supabase.from('marks').update({ score: entry.score }).eq('id', existing.id);
+                if (updateErr) throw updateErr;
+            } else {
+                const { error: insertErr } = await supabase.from('marks').insert(entry);
+                if (insertErr) throw insertErr;
+            }
         }
+        setSuccessMsg("Marks saved successfully.");
+        setTimeout(() => setSuccessMsg(null), 3000);
+    } catch (err: any) {
+        console.error(err);
+        setErrorMsg("Failed to save marks. Check your internet connection or permissions.");
+    } finally {
+        setSaving(false);
     }
-
-    setSaving(false);
-    // Show success toast logic here
   };
 
   if (loading && !selectedAllocation) {
@@ -234,6 +247,20 @@ export const TeacherPortal: React.FC<TeacherPortalProps> = ({ userId }) => {
                     </button>
                 </div>
             </div>
+
+            {errorMsg && (
+                <div className="bg-red-50 text-red-600 p-4 rounded-xl flex items-center gap-2">
+                    <AlertCircle size={20} />
+                    {errorMsg}
+                </div>
+            )}
+            
+            {successMsg && (
+                <div className="bg-green-50 text-green-600 p-4 rounded-xl flex items-center gap-2">
+                    <CheckCircle2 size={20} />
+                    {successMsg}
+                </div>
+            )}
 
             <div className="glass-card rounded-2xl overflow-hidden">
                 <div className="overflow-x-auto">

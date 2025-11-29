@@ -6,7 +6,7 @@ import { StudentAdmissions } from './components/StudentAdmissions';
 import { Auth } from './components/Auth';
 import { TeacherPortal } from './components/TeacherPortal';
 import { AdminAcademics } from './components/AdminAcademics';
-import { ViewState, House, UserProfile } from './types';
+import { ViewState, UserProfile } from './types';
 import { Menu, Loader2, LogOut } from 'lucide-react';
 import { supabase } from './services/supabaseClient';
 
@@ -17,8 +17,6 @@ const App: React.FC = () => {
   
   const [currentView, setCurrentView] = useState<ViewState>(ViewState.DASHBOARD);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  
-  const [houses, setHouses] = useState<House[]>([]);
   
   // 1. Auth Listener
   useEffect(() => {
@@ -99,39 +97,6 @@ const App: React.FC = () => {
       }
   }, [session, profile]);
 
-  // 3. Fetch Data (Admin Context primarily, but houses used by all)
-  const fetchGlobalData = async () => {
-    if (!session) return;
-    
-    // Fetch Houses (Used for Dashboard Summary if available, or we can repurpose)
-    const { data: houseData } = await supabase.from('houses').select('*').order('name'); 
-    if (houseData) {
-      setHouses(houseData.map((h: any) => ({
-        id: h.id,
-        name: h.name,
-        color: h.color || '#64748b',
-        points: h.points || h.total_points || 0,
-        members: h.members || 100
-      })));
-    }
-  };
-
-  useEffect(() => {
-    if (session) fetchGlobalData();
-  }, [session]);
-
-  // 4. Realtime
-  useEffect(() => {
-    if (!session) return;
-    const channel = supabase.channel('public-db-changes')
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'houses' }, (payload) => {
-          const newHouse = payload.new as any;
-          setHouses(prev => prev.map(h => h.id === newHouse.id ? { ...h, points: newHouse.points || 0 } : h));
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [session]);
-  
   const handleSignOut = async () => {
       await supabase.auth.signOut();
       setSession(null);
@@ -164,8 +129,7 @@ const App: React.FC = () => {
     switch (currentView) {
       // Admin Views
       case ViewState.DASHBOARD:
-        // Use houses for generic stats or pass empty if irrelevant
-        return profile.role === 'admin' ? <Dashboard houses={houses} /> : <TeacherPortal userId={session.user.id} />;
+        return profile.role === 'admin' ? <Dashboard /> : <TeacherPortal userId={session.user.id} />;
       case ViewState.ACADEMICS:
         return <AdminAcademics />;
       case ViewState.CLUBS:
