@@ -1,0 +1,142 @@
+
+
+-- ==============================================================================
+-- RUN THIS SCRIPT IN YOUR SUPABASE SQL EDITOR TO FIX PERMISSION ERRORS
+-- ==============================================================================
+
+-- 1. CLUBS TABLES (If not already created)
+CREATE TABLE IF NOT EXISTS public.clubs (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT,
+  description TEXT,
+  meeting_day TEXT,
+  member_count INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE IF NOT EXISTS public.club_members (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  club_id UUID REFERENCES public.clubs(id),
+  student_id UUID REFERENCES public.students(id),
+  role TEXT DEFAULT 'member',
+  joined_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
+);
+
+-- 2. ENABLE ROW LEVEL SECURITY (RLS) ON KEY TABLES
+ALTER TABLE public.teacher_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.students ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.clubs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.club_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.streams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.class_levels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.subjects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.academic_years ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- 3. POLICIES FOR TEACHER ALLOCATIONS
+-- Drop existing to avoid conflicts
+DROP POLICY IF EXISTS "Admins full access allocations" ON public.teacher_allocations;
+DROP POLICY IF EXISTS "Teachers view own allocations" ON public.teacher_allocations;
+
+-- Admins can Create, Read, Update, Delete
+CREATE POLICY "Admins full access allocations" ON public.teacher_allocations
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+
+-- Teachers can only View their own
+CREATE POLICY "Teachers view own allocations" ON public.teacher_allocations
+  FOR SELECT USING (
+    teacher_id = auth.uid()
+  );
+
+-- 4. POLICIES FOR STUDENTS
+DROP POLICY IF EXISTS "Admins full access students" ON public.students;
+DROP POLICY IF EXISTS "Teachers view students" ON public.students;
+
+CREATE POLICY "Admins full access students" ON public.students
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+
+CREATE POLICY "Teachers view students" ON public.students
+  FOR SELECT USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'teacher')
+  );
+
+-- 5. POLICIES FOR CLUBS & MEMBERS
+DROP POLICY IF EXISTS "Admins full access clubs" ON public.clubs;
+DROP POLICY IF EXISTS "Everyone views clubs" ON public.clubs;
+
+CREATE POLICY "Admins full access clubs" ON public.clubs
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+
+CREATE POLICY "Everyone views clubs" ON public.clubs
+  FOR SELECT USING (true);
+
+CREATE POLICY "Admins manage club members" ON public.club_members
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+
+-- 6. POLICIES FOR ACADEMIC STRUCTURE (Streams, Classes, Subjects)
+-- Allows Admins to run "Seed Streams" and manage curriculum
+CREATE POLICY "Admins manage streams" ON public.streams
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+  );
+
+CREATE POLICY "Everyone reads streams" ON public.streams FOR SELECT USING (true);
+CREATE POLICY "Everyone reads classes" ON public.class_levels FOR SELECT USING (true);
+CREATE POLICY "Everyone reads subjects" ON public.subjects FOR SELECT USING (true);
+CREATE POLICY "Everyone reads years" ON public.academic_years FOR SELECT USING (true);
+
+-- 7. PROFILE POLICIES (Fixes infinite loading on login)
+CREATE POLICY "Public profiles view" ON public.profiles FOR SELECT USING (true);
+CREATE POLICY "Users update own profile" ON public.profiles FOR UPDATE USING (id = auth.uid());
+CREATE POLICY "Users insert own profile" ON public.profiles FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- 8. ACADEMIC YEAR FIX (If missing)
+INSERT INTO public.academic_years (name, is_current)
+SELECT '2024', true
+WHERE NOT EXISTS (SELECT 1 FROM public.academic_years WHERE is_current = true);
+
+-- 9. FIX MISSING STREAMS FOR S1-S4
+DO $$
+DECLARE
+  level_rec RECORD;
+  stream_name TEXT;
+  stream_arr TEXT[] := ARRAY['North', 'Central', 'South', 'East', 'West'];
+BEGIN
+  -- For each level from 1 to 4
+  FOR level_rec IN SELECT id, name FROM public.class_levels WHERE level BETWEEN 1 AND 4 LOOP
+    -- For each target stream name
+    FOREACH stream_name IN ARRAY stream_arr LOOP
+      IF NOT EXISTS (SELECT 1 FROM public.streams WHERE class_id = level_rec.id AND name = stream_name) THEN
+         INSERT INTO public.streams (class_id, name) VALUES (level_rec.id, stream_name);
+      END IF;
+    END LOOP;
+  END LOOP;
+END $$;
+
+-- 10. SEED MISSING SUBJECTS
+DO $$
+DECLARE
+  subj_name TEXT;
+  subj_arr TEXT[] := ARRAY[
+    'Biology', 'Physics', 'Chemistry', 'ICT', 'Mathematics', 'English', 
+    'Geography', 'Kiswahili', 'Fine Art', 'CRE', 'Luganda', 
+    'Entrepreneurship', 'Performing Arts', 'Moral Training', 'History', 
+    'Agriculture', 'Physical Education', 'Literature', 'Economics'
+  ];
+BEGIN
+  FOREACH subj_name IN ARRAY subj_arr LOOP
+    IF NOT EXISTS (SELECT 1 FROM public.subjects WHERE name = subj_name) THEN
+      INSERT INTO public.subjects (name, code, level) 
+      VALUES (subj_name, UPPER(SUBSTRING(subj_name, 1, 3)), 'O-Level');
+    END IF;
+  END LOOP;
+END $$;
