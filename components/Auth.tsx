@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
 import { supabase } from '../services/supabaseClient';
-import { Loader2, ArrowRight, ShieldCheck, School, Lock } from 'lucide-react';
+import { Loader2, ArrowRight, ShieldCheck, School, Lock, PenTool } from 'lucide-react';
 
 export const Auth: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -8,7 +9,7 @@ export const Auth: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [role, setRole] = useState<'teacher' | 'admin'>('teacher');
+  const [role, setRole] = useState<'teacher' | 'admin' | 'editor'>('teacher');
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,11 +92,11 @@ export const Auth: React.FC = () => {
             
             {/* Role Toggle for Signup */}
             {!isLogin && (
-              <div className="bg-slate-100 p-1 rounded-xl grid grid-cols-2 gap-1 mb-2">
+              <div className="bg-slate-100 p-1 rounded-xl grid grid-cols-3 gap-1 mb-2">
                 <button
                   type="button"
                   onClick={() => setRole('teacher')}
-                  className={`py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
+                  className={`py-2 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                     role === 'teacher' 
                       ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5' 
                       : 'text-slate-500 hover:text-slate-700'
@@ -105,14 +106,26 @@ export const Auth: React.FC = () => {
                 </button>
                 <button
                   type="button"
+                  onClick={() => setRole('editor')}
+                  className={`py-2 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    role === 'editor' 
+                      ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5' 
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <PenTool size={12} className={role === 'editor' ? 'text-indigo-600' : 'text-slate-400'} />
+                  Editor
+                </button>
+                <button
+                  type="button"
                   onClick={() => setRole('admin')}
-                  className={`py-2 text-sm font-medium rounded-lg transition-all flex items-center justify-center gap-2 ${
+                  className={`py-2 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
                     role === 'admin' 
                       ? 'bg-white text-indigo-600 shadow-sm ring-1 ring-black/5' 
                       : 'text-slate-500 hover:text-slate-700'
                   }`}
                 >
-                  <Lock size={14} className={role === 'admin' ? 'text-indigo-600' : 'text-slate-400'} />
+                  <Lock size={12} className={role === 'admin' ? 'text-indigo-600' : 'text-slate-400'} />
                   Admin
                 </button>
               </div>
@@ -156,7 +169,7 @@ export const Auth: React.FC = () => {
             >
               {loading ? <Loader2 className="animate-spin" size={20} /> : (
                 <>
-                  {isLogin ? 'Sign In' : `Sign Up as ${role === 'admin' ? 'Admin' : 'Teacher'}`}
+                  {isLogin ? 'Sign In' : `Sign Up as ${role.charAt(0).toUpperCase() + role.slice(1)}`}
                   <ArrowRight size={18} />
                 </>
               )}

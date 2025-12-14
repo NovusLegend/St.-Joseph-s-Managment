@@ -1,29 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './components/Dashboard';
-import { ClubsManager } from './components/ClubsManager';
 import { StudentAdmissions } from './components/StudentAdmissions';
+import { SchoolEventsManager } from './components/SchoolEventsManager';
 import { Auth } from './components/Auth';
 import { TeacherPortal } from './components/TeacherPortal';
 import { AdminAcademics } from './components/AdminAcademics';
 import { ViewState, UserProfile } from './types';
-import { Menu, Loader2, LogOut } from 'lucide-react';
+import { Menu, Loader2, LogOut, WifiOff } from 'lucide-react';
 import { supabase } from './services/supabaseClient';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [connectionError, setConnectionError] = useState(false);
   
   const [currentView, setCurrentView] = useState<ViewState>(ViewState.DASHBOARD);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   // 1. Auth Listener
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (!session) setLoadingSession(false);
-    });
+    const initAuth = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        
+        setSession(session);
+        if (!session) setLoadingSession(false);
+      } catch (err) {
+        console.error("Auth initialization failed:", err);
+        setConnectionError(true);
+        setLoadingSession(false);
+      }
+    };
+
+    initAuth();
 
     const {
       data: { subscription },
@@ -55,6 +67,8 @@ const App: React.FC = () => {
                       // Set default view based on role
                       if (data.role === 'teacher') {
                           setCurrentView(ViewState.MY_CLASSES);
+                      } else if (data.role === 'editor') {
+                          setCurrentView(ViewState.EVENTS);
                       } else {
                           setCurrentView(ViewState.DASHBOARD);
                       }
@@ -77,6 +91,8 @@ const App: React.FC = () => {
                            setProfile(newProfile as UserProfile);
                            if (newProfile.role === 'teacher') {
                                 setCurrentView(ViewState.MY_CLASSES);
+                           } else if (newProfile.role === 'editor') {
+                                setCurrentView(ViewState.EVENTS);
                            } else {
                                 setCurrentView(ViewState.DASHBOARD);
                            }
@@ -102,6 +118,21 @@ const App: React.FC = () => {
       setSession(null);
       setProfile(null);
   };
+
+  if (connectionError) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#f0f4f8] gap-4 p-4 text-center">
+        <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-2">
+           <WifiOff size={32} />
+        </div>
+        <h2 className="text-xl font-bold text-slate-800">Connection Failed</h2>
+        <p className="text-slate-500 max-w-sm">Unable to connect to the system. Please check your internet connection and reload.</p>
+        <button onClick={() => window.location.reload()} className="mt-4 px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+          Retry Connection
+        </button>
+      </div>
+    );
+  }
 
   if (loadingSession) {
     return (
@@ -129,13 +160,13 @@ const App: React.FC = () => {
     switch (currentView) {
       // Admin Views
       case ViewState.DASHBOARD:
-        return profile.role === 'admin' ? <Dashboard /> : <TeacherPortal userId={session.user.id} />;
+        return profile.role === 'admin' || profile.role === 'editor' ? <Dashboard /> : <TeacherPortal userId={session.user.id} />;
       case ViewState.ACADEMICS:
         return <AdminAcademics />;
-      case ViewState.CLUBS:
-        return <ClubsManager />;
       case ViewState.ADMISSIONS:
         return <StudentAdmissions />;
+      case ViewState.EVENTS:
+        return <SchoolEventsManager />;
       
       // Teacher Views
       case ViewState.MY_CLASSES:
@@ -192,7 +223,9 @@ const App: React.FC = () => {
                     Hello, <span className="font-bold">{profile.full_name}</span> 👋
                    </h1>
                    <p className="text-sm text-slate-500">
-                    {profile.role === 'admin' ? "Managing St. Joseph's Ecosystem." : "Empowering students today."}
+                    {profile.role === 'admin' && "Managing St. Joseph's Ecosystem."}
+                    {profile.role === 'teacher' && "Empowering students today."}
+                    {profile.role === 'editor' && "Updating school activities."}
                    </p>
                 </div>
                 <div className="hidden md:flex items-center gap-3">

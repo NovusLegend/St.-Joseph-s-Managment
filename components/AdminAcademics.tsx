@@ -1,6 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
-import { Users, GraduationCap, BarChart3, Plus, X, Loader2, CheckCircle2, ChevronDown, Database, AlertCircle, BookOpen, Calendar, Clock, ArrowRight } from 'lucide-react';
+import { Users, GraduationCap, BarChart3, Plus, X, Loader2, CheckCircle2, ChevronDown, Database, AlertCircle, BookOpen, Calendar, Clock, ArrowRight, Trash2 } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { UserProfile, Subject, ClassLevel, Stream, TeacherAllocation, AcademicYear, Term } from '../types';
 
@@ -73,7 +73,7 @@ export const AdminAcademics: React.FC = () => {
             supabase.from('subjects').select('*').order('name'),
             supabase.from('class_levels').select('*').order('level'),
             supabase.from('streams').select('*').order('name'),
-            supabase.from('academic_years').select('*').order('name', { ascending: false }),
+            supabase.from('academic_years').select('*').order('start_date', { ascending: false }),
             supabase.from('teacher_allocations').select(`
                 id,
                 teacher_id,
@@ -99,7 +99,7 @@ export const AdminAcademics: React.FC = () => {
                 .from('terms')
                 .select('*')
                 .eq('academic_year_id', activeY.id)
-                .order('name');
+                .order('start_date');
             if (termsData) {
                 setTerms(termsData as Term[]);
                 setCurrentTerm(termsData.find((t: any) => t.is_current) || null);
@@ -171,10 +171,25 @@ export const AdminAcademics: React.FC = () => {
 
   const handleCreateYear = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    if (!newYearName || !newYearStart || !newYearEnd) {
+        setErrorMsg("Please fill in all fields (Name, Start Date, End Date).");
+        return;
+    }
+
+    if (new Date(newYearStart) > new Date(newYearEnd)) {
+        setErrorMsg("Start Date cannot be after End Date.");
+        return;
+    }
+
     setSubmitting(true);
     try {
-        // Deactivate old years if this one is active (simple frontend approach, DB trigger better)
-        await supabase.from('academic_years').update({ is_current: false }).neq('id', '00000000-0000-0000-0000-000000000000'); // Deactivate all
+        // Safe Update: Set all others to false first.
+        // Note: If you have the SQL trigger from SQL.txt installed, the DB handles this automatically.
+        // We do this here as a fallback for the frontend.
+        await supabase.from('academic_years').update({ is_current: false }).gt('created_at', '2000-01-01');
 
         const { error } = await supabase.from('academic_years').insert({
             name: newYearName,
@@ -197,6 +212,8 @@ export const AdminAcademics: React.FC = () => {
   };
 
   const handleActivateYear = async (yearId: string) => {
+    if (!confirm("Are you sure you want to change the active Academic Year? This will affect all current operations.")) return;
+    
     setLoading(true);
     try {
         // 1. Deactivate all
@@ -205,6 +222,8 @@ export const AdminAcademics: React.FC = () => {
         const { error } = await supabase.from('academic_years').update({ is_current: true }).eq('id', yearId);
         if (error) throw error;
         await fetchData();
+        setSuccessMsg("Academic Year Switched Successfully.");
+        setTimeout(() => setSuccessMsg(null), 3000);
     } catch (err) {
         alert(formatError(err));
     } finally {
@@ -215,6 +234,12 @@ export const AdminAcademics: React.FC = () => {
   const handleCreateTerm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentYear) return;
+    
+    if (!newTermStart || !newTermEnd) {
+        setErrorMsg("Please select start and end dates for the term.");
+        return;
+    }
+
     setSubmitting(true);
     try {
         await supabase.from('terms').update({ is_current: false }).eq('academic_year_id', currentYear.id);
@@ -489,11 +514,11 @@ export const AdminAcademics: React.FC = () => {
         {isSessionModalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                 <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsSessionModalOpen(false)}></div>
-                <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto">
+                <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden animate-fade-in max-h-[90vh] overflow-y-auto">
                     <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-50">
                         <div>
                             <h3 className="text-xl font-bold text-slate-900">Academic Calendar</h3>
-                            <p className="text-sm text-indigo-600">Dictate the start and end of school terms.</p>
+                            <p className="text-sm text-indigo-600">Configure academic years and school terms.</p>
                         </div>
                         <button onClick={() => setIsSessionModalOpen(false)}><X size={20} className="text-slate-400 hover:text-slate-600" /></button>
                     </div>
@@ -501,39 +526,73 @@ export const AdminAcademics: React.FC = () => {
                     <div className="p-6 space-y-8">
                         {/* 1. Academic Year Section */}
                         <div className="space-y-4">
-                            <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2">Academic Year</h4>
+                            <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2">Academic Year Management</h4>
                             
-                            <div className="flex gap-4 overflow-x-auto pb-2">
-                                {academicYears.map(year => (
-                                    <div 
-                                        key={year.id} 
-                                        onClick={() => handleActivateYear(year.id)}
-                                        className={`flex-shrink-0 cursor-pointer p-4 rounded-xl border min-w-[140px] transition-all ${year.is_current ? 'bg-indigo-600 text-white border-indigo-600 shadow-md ring-2 ring-indigo-200' : 'bg-white border-slate-200 hover:border-indigo-300'}`}
-                                    >
-                                        <div className="text-sm opacity-80 mb-1">{year.is_current ? 'Active Year' : 'Inactive'}</div>
-                                        <div className="text-xl font-bold">{year.name}</div>
-                                        {year.start_date && <div className="text-xs mt-2 opacity-70">{new Date(year.start_date).getFullYear()}</div>}
-                                    </div>
-                                ))}
-                                {/* Create New Year Form (Mini) */}
-                                <div className="flex-shrink-0 min-w-[200px] p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300">
-                                    <h5 className="text-sm font-bold text-slate-700 mb-2">Create New Year</h5>
-                                    <div className="space-y-2">
-                                        <input 
-                                            placeholder="Year (e.g. 2025)" 
-                                            className="w-full p-2 text-sm border rounded"
-                                            value={newYearName}
-                                            onChange={e => setNewYearName(e.target.value)}
-                                        />
-                                        <input type="date" className="w-full p-2 text-sm border rounded" value={newYearStart} onChange={e => setNewYearStart(e.target.value)}/>
-                                        <input type="date" className="w-full p-2 text-sm border rounded" value={newYearEnd} onChange={e => setNewYearEnd(e.target.value)}/>
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                {/* Left: Create New Year */}
+                                <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
+                                    <h5 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                        <Plus size={16} className="text-indigo-600"/> Create New Year
+                                    </h5>
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="text-xs font-bold text-slate-500 mb-1 block">Year Name</label>
+                                            <input 
+                                                placeholder="e.g. 2025" 
+                                                className="w-full p-2.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                value={newYearName}
+                                                onChange={e => setNewYearName(e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 mb-1 block">Start Date</label>
+                                                <input type="date" className="w-full p-2 text-sm border border-slate-300 rounded-lg" value={newYearStart} onChange={e => setNewYearStart(e.target.value)}/>
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 mb-1 block">End Date</label>
+                                                <input type="date" className="w-full p-2 text-sm border border-slate-300 rounded-lg" value={newYearEnd} onChange={e => setNewYearEnd(e.target.value)}/>
+                                            </div>
+                                        </div>
                                         <button 
                                             onClick={handleCreateYear}
-                                            disabled={!newYearName || submitting}
-                                            className="w-full bg-slate-800 text-white text-xs font-bold py-2 rounded hover:bg-slate-700"
+                                            disabled={submitting}
+                                            className="w-full bg-slate-900 text-white text-sm font-bold py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-70 mt-2"
                                         >
-                                            {submitting ? <Loader2 size={12} className="animate-spin mx-auto"/> : 'Create & Activate'}
+                                            {submitting ? <Loader2 size={14} className="animate-spin"/> : 'Create & Set Active'}
                                         </button>
+                                        <p className="text-[10px] text-slate-400 text-center">Creating a year automatically sets it as active.</p>
+                                    </div>
+                                </div>
+
+                                {/* Right: Existing Years */}
+                                <div className="lg:col-span-2 space-y-3">
+                                    <h5 className="text-sm font-bold text-slate-500">Existing Years</h5>
+                                    <div className="flex gap-4 overflow-x-auto pb-4">
+                                        {academicYears.map(year => (
+                                            <div 
+                                                key={year.id} 
+                                                className={`flex-shrink-0 p-4 rounded-xl border min-w-[160px] transition-all relative group ${year.is_current ? 'bg-white border-indigo-600 shadow-md ring-2 ring-indigo-100' : 'bg-white border-slate-200 hover:border-indigo-300'}`}
+                                            >
+                                                <div className="flex justify-between items-start">
+                                                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${year.is_current ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
+                                                        {year.is_current ? 'ACTIVE' : 'INACTIVE'}
+                                                    </span>
+                                                </div>
+                                                <div className="mt-2 text-xl font-bold text-slate-800">{year.name}</div>
+                                                <div className="text-xs text-slate-500 mt-1">
+                                                    {year.start_date ? new Date(year.start_date).getFullYear() : 'N/A'} - {year.end_date ? new Date(year.end_date).getFullYear() : 'N/A'}
+                                                </div>
+                                                {!year.is_current && (
+                                                    <button 
+                                                        onClick={() => handleActivateYear(year.id)}
+                                                        className="mt-3 w-full py-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded transition-colors"
+                                                    >
+                                                        Set Active
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
                             </div>
@@ -541,60 +600,73 @@ export const AdminAcademics: React.FC = () => {
 
                         {/* 2. Term Section (Only if year exists) */}
                         {currentYear && (
-                             <div className="space-y-4">
-                                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 flex justify-between">
+                             <div className="space-y-4 pt-4 border-t border-slate-100">
+                                <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider border-b border-slate-100 pb-2 flex justify-between items-center">
                                     <span>Terms for {currentYear.name}</span>
-                                    {currentTerm && <span className="text-indigo-600 normal-case bg-indigo-50 px-2 rounded text-xs py-0.5">Current: {currentTerm.name}</span>}
+                                    {currentTerm && <span className="text-indigo-600 normal-case bg-indigo-50 px-2 rounded text-xs py-1 border border-indigo-100 font-medium">Current: {currentTerm.name}</span>}
                                 </h4>
                                 
-                                <div className="space-y-3">
-                                    {terms.map(term => (
-                                        <div key={term.id} className="flex items-center justify-between p-3 bg-white border border-slate-100 rounded-lg">
-                                            <div>
-                                                <span className="font-bold text-slate-700">{term.name}</span>
-                                                <span className="text-xs text-slate-400 ml-2">
-                                                    {term.start_date} <ArrowRight size={10} className="inline"/> {term.end_date}
-                                                </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div className="space-y-3">
+                                        <h5 className="text-sm font-bold text-slate-500">Term List</h5>
+                                        {terms.length === 0 && <p className="text-sm text-slate-400 italic">No terms created yet.</p>}
+                                        {terms.map(term => (
+                                            <div key={term.id} className={`flex items-center justify-between p-3 border rounded-lg ${term.is_current ? 'bg-green-50 border-green-200' : 'bg-white border-slate-100'}`}>
+                                                <div>
+                                                    <span className={`font-bold ${term.is_current ? 'text-green-800' : 'text-slate-700'}`}>{term.name}</span>
+                                                    <div className="text-xs text-slate-400 mt-0.5 flex items-center gap-1">
+                                                        <Clock size={10} />
+                                                        {term.start_date} <ArrowRight size={10} /> {term.end_date}
+                                                    </div>
+                                                </div>
+                                                {term.is_current ? (
+                                                    <span className="text-xs font-bold text-green-600 flex items-center gap-1 bg-white px-2 py-1 rounded shadow-sm"><CheckCircle2 size={12}/> Active</span>
+                                                ) : (
+                                                    <button onClick={() => handleActivateTerm(term.id)} className="text-xs text-indigo-600 font-medium hover:bg-indigo-50 px-2 py-1 rounded transition-colors">Activate</button>
+                                                )}
                                             </div>
-                                            {term.is_current ? (
-                                                <span className="text-xs font-bold text-green-600 flex items-center gap-1"><CheckCircle2 size={12}/> Active</span>
-                                            ) : (
-                                                <button onClick={() => handleActivateTerm(term.id)} className="text-xs text-indigo-600 font-medium hover:underline">Set Active</button>
-                                            )}
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
 
                                     {/* New Term Creator */}
-                                    <div className="bg-slate-50 p-4 rounded-xl flex flex-col md:flex-row gap-3 items-end border border-slate-200">
-                                        <div className="flex-1 w-full">
-                                            <label className="text-xs font-bold text-slate-500 mb-1 block">New Term Name</label>
-                                            <select value={newTermName} onChange={e => setNewTermName(e.target.value)} className="w-full p-2 text-sm border rounded">
-                                                <option>Term 1</option>
-                                                <option>Term 2</option>
-                                                <option>Term 3</option>
-                                            </select>
+                                    <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 h-fit">
+                                        <h5 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
+                                            <Plus size={16} className="text-indigo-600"/> Add Term
+                                        </h5>
+                                        <div className="space-y-3">
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-500 mb-1 block">Term Name</label>
+                                                <select value={newTermName} onChange={e => setNewTermName(e.target.value)} className="w-full p-2.5 text-sm border border-slate-300 rounded-lg bg-white">
+                                                    <option>Term 1</option>
+                                                    <option>Term 2</option>
+                                                    <option>Term 3</option>
+                                                </select>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <div>
+                                                    <label className="text-xs font-bold text-slate-500 mb-1 block">Start Date</label>
+                                                    <input type="date" className="w-full p-2 text-sm border border-slate-300 rounded-lg" value={newTermStart} onChange={e => setNewTermStart(e.target.value)}/>
+                                                </div>
+                                                <div>
+                                                    <label className="text-xs font-bold text-slate-500 mb-1 block">End Date</label>
+                                                    <input type="date" className="w-full p-2 text-sm border border-slate-300 rounded-lg" value={newTermEnd} onChange={e => setNewTermEnd(e.target.value)}/>
+                                                </div>
+                                            </div>
+                                            <button 
+                                                onClick={handleCreateTerm}
+                                                disabled={submitting}
+                                                className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-indigo-700 transition-all shadow-md shadow-indigo-200 mt-2"
+                                            >
+                                                {submitting ? 'Processing...' : 'Add Term'}
+                                            </button>
                                         </div>
-                                        <div className="flex-1 w-full">
-                                            <label className="text-xs font-bold text-slate-500 mb-1 block">Start Date</label>
-                                            <input type="date" className="w-full p-2 text-sm border rounded" value={newTermStart} onChange={e => setNewTermStart(e.target.value)}/>
-                                        </div>
-                                        <div className="flex-1 w-full">
-                                            <label className="text-xs font-bold text-slate-500 mb-1 block">End Date</label>
-                                            <input type="date" className="w-full p-2 text-sm border rounded" value={newTermEnd} onChange={e => setNewTermEnd(e.target.value)}/>
-                                        </div>
-                                        <button 
-                                            onClick={handleCreateTerm}
-                                            disabled={submitting}
-                                            className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 h-[38px]"
-                                        >
-                                            {submitting ? '...' : 'Add Term'}
-                                        </button>
                                     </div>
                                 </div>
                              </div>
                         )}
                         
-                        {successMsg && <div className="text-green-600 text-sm font-medium text-center">{successMsg}</div>}
+                        {errorMsg && <div className="text-red-600 text-sm font-medium text-center bg-red-50 p-2 rounded-lg border border-red-100">{errorMsg}</div>}
+                        {successMsg && <div className="text-green-600 text-sm font-medium text-center bg-green-50 p-2 rounded-lg border border-green-100">{successMsg}</div>}
                     </div>
                 </div>
             </div>

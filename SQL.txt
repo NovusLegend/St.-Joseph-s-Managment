@@ -1,5 +1,4 @@
 
-
 -- ==============================================================================
 -- RUN THIS SCRIPT IN YOUR SUPABASE SQL EDITOR TO FIX PERMISSION ERRORS
 -- ==============================================================================
@@ -35,6 +34,7 @@ ALTER TABLE public.subjects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.academic_years ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.terms ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.school_events ENABLE ROW LEVEL SECURITY;
 
 -- 3. POLICIES FOR TEACHER ALLOCATIONS
 DROP POLICY IF EXISTS "Admins full access allocations" ON public.teacher_allocations;
@@ -169,3 +169,27 @@ CREATE TRIGGER trigger_single_current_year
   FOR EACH ROW
   WHEN (NEW.is_current = true)
   EXECUTE PROCEDURE set_single_current_year();
+
+-- 12. UPDATE ROLE CHECK CONSTRAINT FOR 'EDITOR'
+-- This allows the profile table to accept 'editor' as a valid role
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'profiles_role_check') THEN
+    ALTER TABLE public.profiles DROP CONSTRAINT profiles_role_check;
+  END IF;
+END $$;
+
+ALTER TABLE public.profiles ADD CONSTRAINT profiles_role_check 
+  CHECK (role IN ('admin', 'teacher', 'student', 'parent', 'alumni', 'editor'));
+
+-- 13. SCHOOL EVENTS PERMISSIONS
+-- Admins and Editors can manage events
+DROP POLICY IF EXISTS "Manage events" ON public.school_events;
+CREATE POLICY "Manage events" ON public.school_events
+  FOR ALL USING (
+    exists (select 1 from public.profiles where id = auth.uid() and (role = 'admin' OR role = 'editor'))
+  );
+
+DROP POLICY IF EXISTS "Read events" ON public.school_events;
+CREATE POLICY "Read events" ON public.school_events
+  FOR SELECT USING (true);

@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { ViewState, UserRole } from '../types';
 import { 
@@ -6,7 +7,8 @@ import {
   LogOut, 
   GraduationCap, 
   BookOpen,
-  UserPlus
+  UserPlus,
+  CalendarDays
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -23,15 +25,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setView, onSignOu
     { id: ViewState.DASHBOARD, label: 'Overview', icon: LayoutDashboard },
     { id: ViewState.ACADEMICS, label: 'Academics', icon: GraduationCap },
     { id: ViewState.ADMISSIONS, label: 'Admissions', icon: UserPlus },
-    { id: ViewState.CLUBS, label: 'Clubs & Societies', icon: Users },
+    { id: ViewState.EVENTS, label: 'School Events', icon: CalendarDays },
   ];
 
   const teacherItems = [
     { id: ViewState.MY_CLASSES, label: 'My Classes', icon: BookOpen },
-    { id: ViewState.CLUBS, label: 'Clubs', icon: Users },
   ];
 
-  const navItems = role === 'admin' ? adminItems : teacherItems;
+  const editorItems = [
+    { id: ViewState.EVENTS, label: 'Manage Events', icon: CalendarDays },
+    { id: ViewState.DASHBOARD, label: 'School Overview', icon: LayoutDashboard },
+  ];
+
+  let navItems = teacherItems;
+  if (role === 'admin') navItems = adminItems;
+  if (role === 'editor') navItems = editorItems;
 
   return (
     <div className={`

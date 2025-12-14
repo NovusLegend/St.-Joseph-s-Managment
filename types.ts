@@ -1,8 +1,8 @@
 
 export enum ViewState {
   DASHBOARD = 'DASHBOARD',
-  CLUBS = 'CLUBS',
   ADMISSIONS = 'ADMISSIONS',
+  EVENTS = 'EVENTS',
   // Teacher Specific
   MY_CLASSES = 'MY_CLASSES',
   GRADING = 'GRADING',
@@ -10,7 +10,7 @@ export enum ViewState {
   ACADEMICS = 'ACADEMICS'
 }
 
-export type UserRole = 'admin' | 'teacher' | 'student' | 'parent';
+export type UserRole = 'admin' | 'teacher' | 'student' | 'parent' | 'editor';
 
 export interface UserProfile {
   id: string;
@@ -36,6 +36,16 @@ export interface Club {
   meeting_day: string;
   patron_name?: string;
   member_count?: number;
+}
+
+export interface SchoolEvent {
+  id: string;
+  title: string;
+  description: string;
+  event_date: string; // ISO String
+  location: string;
+  audience: 'all' | 'students' | 'staff' | 'parents';
+  created_by?: string;
 }
 
 export interface ElectionCandidate {
